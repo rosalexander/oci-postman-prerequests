@@ -1,0 +1,743 @@
+{
+	"info": {
+		"_postman_id": "df853d7c-4356-45c5-8c78-08e9fe404827",
+		"name": "OCI API",
+		"description": "First run 'LOAD JSRSASign' once to load in the RSA-SHA256 signing library. Then you may run the other calls. They are meant to be ran sequentially.\n\nDon't forget to set the variables in the OCI environment\n\ntenancyId: OCID of your tenancy\n\nuserId: OCID of the user\n\nfingerprint: fingerprint of user's API Key\n\nnamespaceName: namespace of the tenancy\n\ncompartmentId: compartment to create the bucket\n\nsecret: entire PEM key of the user. For macOS run 'pbcopy < ~/.oci/oci_api_key.pem' assuming you have set up the keys for OCI previously\n\npassphrase: optional. passphrase for the private key if one was set\n\nendpoint: optional. endpoint of the API call. see https://docs.cloud.oracle.com/iaas/Content/API/Concepts/apiref.html",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Load JSRSASign",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"id": "824e628b-b420-417b-894b-417ab6412896",
+						"type": "text/javascript",
+						"exec": [
+							"postman.setGlobalVariable(\"jsrsasign-js\", responseBody);"
+						]
+					}
+				}
+			],
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "http://kjur.github.io/jsrsasign/jsrsasign-latest-all-min.js",
+					"protocol": "http",
+					"host": [
+						"kjur",
+						"github",
+						"io"
+					],
+					"path": [
+						"jsrsasign",
+						"jsrsasign-latest-all-min.js"
+					]
+				},
+				"description": "Load the RSA-Sign Crypto LIbrary in a global environment variable\n\nSource: http://kjur.github.io/jsrsasign/jsrsasign-latest-all-min.js\n\nGithub: https://github.com/kjur/jsrsasign"
+			},
+			"response": []
+		},
+		{
+			"name": "CreateBuckets",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "d6fd288c-576b-46a8-98d2-4ee2dd98a727",
+						"exec": [
+							"//By Alexander Ros",
+							"//February 19, 2019",
+							"",
+							"//Loads jsrsasign into the Postman sandbox to utilize RSA-SHA256 signing functions. See https://github.com/kjur/jsrsasign/issues/199",
+							"var navigator = {}; //fake a navigator object for the lib",
+							"var window = {}; //fake a window object for the lib",
+							"eval(postman.getGlobalVariable(\"jsrsasign-js\")); //import javascript jsrsasign",
+							"",
+							"//Resolve Postman variables in request for use in constructing the signing string. See https://github.com/postmanlabs/postman-app-support/issues/3322",
+							"let sdk = require('postman-collection'),",
+							"    newRequest = new sdk.Request(pm.request.toJSON()),",
+							"    resolvedRequest = newRequest.toObjectResolved(null, [pm.variables.toObject()], { ignoreOwnVariables: true });",
+							"",
+							"//Construct the keyId for the Authorization header",
+							"var keyId = postman.getEnvironmentVariable(\"tenancyId\") + '/' + postman.getEnvironmentVariable(\"userId\") + '/' +  postman.getEnvironmentVariable(\"fingerprint\");",
+							"",
+							"var date = new Date().toUTCString()",
+							"",
+							"//Initialize the signer using the secret vaariable (which should be the user's private PEM key) and a passphrase if necessary.",
+							"var secret = postman.getEnvironmentVariable(\"secret\");",
+							"var passphrase = postman.getEnvironmentVariable(\"passphrase\");",
+							"var sig = new KJUR.crypto.Signature({\"alg\": \"SHA256withRSA\"});",
+							"sig.init(secret, passphrase)",
+							"",
+							"//Constructing the request-target string",
+							"var path = resolvedRequest.url.path.join('/');",
+							"var queries = resolvedRequest.url.query",
+							"                .filter(query => query.disabled !== true)",
+							"                .map(query => (query['key'] + '=' + query['value']))",
+							"                .join('&');",
+							"",
+							"var request_target = '/' + path",
+							"",
+							"if (queries.length > 0)",
+							"    request_target += '?' + queries",
+							"",
+							"",
+							"if (request.method == 'GET' || request.method == 'DELETE') {",
+							"    ",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"}",
+							"",
+							"else if (request.method == 'PUT' || request.method == 'POST') {",
+							"    ",
+							"    x_content_sha256 = CryptoJS.SHA256(resolvedRequest.body.raw).toString(CryptoJS.enc.Base64)",
+							"",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}\\nx-content-sha256: ${x_content_sha256}\\ncontent-type: ${request.headers[\"content-type\"]}\\ncontent-length: ${resolvedRequest.body.raw.length}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host x-content-sha256 content-type content-length\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"    pm.variables.set('digest', x_content_sha256)",
+							"}",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "authorization",
+						"value": "{{auth}}",
+						"type": "text"
+					},
+					{
+						"key": "date",
+						"value": "{{date}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"name": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "x-content-sha256",
+						"value": "{{digest}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"compartmentId\":\"{{compartmentId}}\", \"name\":\"postman_bucket\"}"
+				},
+				"url": {
+					"raw": "https://objectstorage.us-phoenix-1.oraclecloud.com/n/{{namespaceName}}/b/",
+					"protocol": "https",
+					"host": [
+						"objectstorage",
+						"us-phoenix-1",
+						"oraclecloud",
+						"com"
+					],
+					"path": [
+						"n",
+						"{{namespaceName}}",
+						"b",
+						""
+					]
+				},
+				"description": "Creates a bucket called 'postman_bucket'"
+			},
+			"response": []
+		},
+		{
+			"name": "ListBuckets",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "d6fd288c-576b-46a8-98d2-4ee2dd98a727",
+						"exec": [
+							"//By Alexander Ros",
+							"//February 19, 2019",
+							"",
+							"//Loads jsrsasign into the Postman sandbox to utilize RSA-SHA256 signing functions. See https://github.com/kjur/jsrsasign/issues/199",
+							"var navigator = {}; //fake a navigator object for the lib",
+							"var window = {}; //fake a window object for the lib",
+							"eval(postman.getGlobalVariable(\"jsrsasign-js\")); //import javascript jsrsasign",
+							"",
+							"//Resolve Postman variables in request for use in constructing the signing string. See https://github.com/postmanlabs/postman-app-support/issues/3322",
+							"let sdk = require('postman-collection'),",
+							"    newRequest = new sdk.Request(pm.request.toJSON()),",
+							"    resolvedRequest = newRequest.toObjectResolved(null, [pm.variables.toObject()], { ignoreOwnVariables: true });",
+							"",
+							"//Construct the keyId for the Authorization header",
+							"var keyId = postman.getEnvironmentVariable(\"tenancyId\") + '/' + postman.getEnvironmentVariable(\"userId\") + '/' +  postman.getEnvironmentVariable(\"fingerprint\");",
+							"",
+							"var date = new Date().toUTCString()",
+							"",
+							"//Initialize the signer using the secret vaariable (which should be the user's private PEM key) and a passphrase if necessary.",
+							"var secret = postman.getEnvironmentVariable(\"secret\");",
+							"var passphrase = postman.getEnvironmentVariable(\"passphrase\");",
+							"var sig = new KJUR.crypto.Signature({\"alg\": \"SHA256withRSA\"});",
+							"sig.init(secret, passphrase)",
+							"",
+							"//Constructing the request-target string",
+							"var path = resolvedRequest.url.path.join('/');",
+							"var queries = resolvedRequest.url.query",
+							"                .filter(query => query.disabled !== true)",
+							"                .map(query => (query['key'] + '=' + query['value']))",
+							"                .join('&');",
+							"",
+							"var request_target = '/' + path",
+							"",
+							"if (queries.length > 0)",
+							"    request_target += '?' + queries",
+							"",
+							"",
+							"if (request.method == 'GET' || request.method == 'DELETE') {",
+							"    ",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"}",
+							"",
+							"else if (request.method == 'PUT' || request.method == 'POST') {",
+							"    ",
+							"    x_content_sha256 = CryptoJS.SHA256(resolvedRequest.body.raw).toString(CryptoJS.enc.Base64)",
+							"",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}\\nx-content-sha256: ${x_content_sha256}\\ncontent-type: ${request.headers[\"content-type\"]}\\ncontent-length: ${resolvedRequest.body.raw.length}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host x-content-sha256 content-type content-length\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"    pm.variables.set('digest', x_content_sha256)",
+							"}",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "authorization",
+						"value": "{{auth}}",
+						"type": "text"
+					},
+					{
+						"key": "date",
+						"value": "{{date}}",
+						"type": "text"
+					},
+					{
+						"key": "Content-Type",
+						"name": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					},
+					{
+						"key": "x-content-sha256",
+						"value": "{{digest}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"compartmentId\":\"{{compartmentId}}\", \"name\":\"postman_bucket\"}"
+				},
+				"url": {
+					"raw": "https://objectstorage.us-phoenix-1.oraclecloud.com/n/{{namespaceName}}/b/?compartmentId={{compartmentId}}",
+					"protocol": "https",
+					"host": [
+						"objectstorage",
+						"us-phoenix-1",
+						"oraclecloud",
+						"com"
+					],
+					"path": [
+						"n",
+						"{{namespaceName}}",
+						"b",
+						""
+					],
+					"query": [
+						{
+							"key": "compartmentId",
+							"value": "{{compartmentId}}"
+						}
+					]
+				},
+				"description": "Lists all buckets in the compartment"
+			},
+			"response": []
+		},
+		{
+			"name": "PutObject",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "d6fd288c-576b-46a8-98d2-4ee2dd98a727",
+						"exec": [
+							"//By Alexander Ros",
+							"//February 19, 2019",
+							"",
+							"//Loads jsrsasign into the Postman sandbox to utilize RSA-SHA256 signing functions. See https://github.com/kjur/jsrsasign/issues/199",
+							"var navigator = {}; //fake a navigator object for the lib",
+							"var window = {}; //fake a window object for the lib",
+							"eval(postman.getGlobalVariable(\"jsrsasign-js\")); //import javascript jsrsasign",
+							"",
+							"//Resolve Postman variables in request for use in constructing the signing string. See https://github.com/postmanlabs/postman-app-support/issues/3322",
+							"let sdk = require('postman-collection'),",
+							"    newRequest = new sdk.Request(pm.request.toJSON()),",
+							"    resolvedRequest = newRequest.toObjectResolved(null, [pm.variables.toObject()], { ignoreOwnVariables: true });",
+							"",
+							"//Construct the keyId for the Authorization header",
+							"var keyId = postman.getEnvironmentVariable(\"tenancyId\") + '/' + postman.getEnvironmentVariable(\"userId\") + '/' +  postman.getEnvironmentVariable(\"fingerprint\");",
+							"",
+							"var date = new Date().toUTCString()",
+							"",
+							"//Initialize the signer using the secret vaariable (which should be the user's private PEM key) and a passphrase if necessary.",
+							"var secret = postman.getEnvironmentVariable(\"secret\");",
+							"var passphrase = postman.getEnvironmentVariable(\"passphrase\");",
+							"var sig = new KJUR.crypto.Signature({\"alg\": \"SHA256withRSA\"});",
+							"sig.init(secret, passphrase)",
+							"",
+							"//Constructing the request-target string",
+							"var path = resolvedRequest.url.path.join('/');",
+							"var queries = resolvedRequest.url.query",
+							"                .filter(query => query.disabled !== true)",
+							"                .map(query => (query['key'] + '=' + query['value']))",
+							"                .join('&');",
+							"",
+							"var request_target = '/' + path",
+							"",
+							"if (queries.length > 0)",
+							"    request_target += '?' + queries",
+							"",
+							"",
+							"if (request.method == 'GET' || request.method == 'DELETE') {",
+							"    ",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"}",
+							"",
+							"else if (request.method == 'PUT' || request.method == 'POST') {",
+							"    ",
+							"    x_content_sha256 = CryptoJS.SHA256(resolvedRequest.body.raw).toString(CryptoJS.enc.Base64)",
+							"",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}\\nx-content-sha256: ${x_content_sha256}\\ncontent-type: ${request.headers[\"content-type\"]}\\ncontent-length: ${resolvedRequest.body.raw.length}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host x-content-sha256 content-type content-length\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"    pm.variables.set('digest', x_content_sha256)",
+							"}",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "PUT",
+				"header": [
+					{
+						"key": "authorization",
+						"type": "text",
+						"value": "{{auth}}"
+					},
+					{
+						"key": "date",
+						"type": "text",
+						"value": "{{date}}"
+					},
+					{
+						"key": "Content-Type",
+						"name": "Content-Type",
+						"value": "text/plain",
+						"type": "text"
+					},
+					{
+						"key": "x-content-sha256",
+						"type": "text",
+						"value": "{{digest}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "Hello world!"
+				},
+				"url": {
+					"raw": "https://objectstorage.us-phoenix-1.oraclecloud.com/n/{{namespaceName}}/b/postman_bucket/o/postman_file.txt",
+					"protocol": "https",
+					"host": [
+						"objectstorage",
+						"us-phoenix-1",
+						"oraclecloud",
+						"com"
+					],
+					"path": [
+						"n",
+						"{{namespaceName}}",
+						"b",
+						"postman_bucket",
+						"o",
+						"postman_file.txt"
+					]
+				},
+				"description": "Adds a text file in the bucket 'postman_bucket' that says 'Hello world!'"
+			},
+			"response": []
+		},
+		{
+			"name": "DeleteObject",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "d6fd288c-576b-46a8-98d2-4ee2dd98a727",
+						"exec": [
+							"//By Alexander Ros",
+							"//February 19, 2019",
+							"",
+							"//Loads jsrsasign into the Postman sandbox to utilize RSA-SHA256 signing functions. See https://github.com/kjur/jsrsasign/issues/199",
+							"var navigator = {}; //fake a navigator object for the lib",
+							"var window = {}; //fake a window object for the lib",
+							"eval(postman.getGlobalVariable(\"jsrsasign-js\")); //import javascript jsrsasign",
+							"",
+							"//Resolve Postman variables in request for use in constructing the signing string. See https://github.com/postmanlabs/postman-app-support/issues/3322",
+							"let sdk = require('postman-collection'),",
+							"    newRequest = new sdk.Request(pm.request.toJSON()),",
+							"    resolvedRequest = newRequest.toObjectResolved(null, [pm.variables.toObject()], { ignoreOwnVariables: true });",
+							"",
+							"//Construct the keyId for the Authorization header",
+							"var keyId = postman.getEnvironmentVariable(\"tenancyId\") + '/' + postman.getEnvironmentVariable(\"userId\") + '/' +  postman.getEnvironmentVariable(\"fingerprint\");",
+							"",
+							"var date = new Date().toUTCString()",
+							"",
+							"//Initialize the signer using the secret vaariable (which should be the user's private PEM key) and a passphrase if necessary.",
+							"var secret = postman.getEnvironmentVariable(\"secret\");",
+							"var passphrase = postman.getEnvironmentVariable(\"passphrase\");",
+							"var sig = new KJUR.crypto.Signature({\"alg\": \"SHA256withRSA\"});",
+							"sig.init(secret, passphrase)",
+							"",
+							"//Constructing the request-target string",
+							"var path = resolvedRequest.url.path.join('/');",
+							"var queries = resolvedRequest.url.query",
+							"                .filter(query => query.disabled !== true)",
+							"                .map(query => (query['key'] + '=' + query['value']))",
+							"                .join('&');",
+							"",
+							"var request_target = '/' + path",
+							"",
+							"if (queries.length > 0)",
+							"    request_target += '?' + queries",
+							"",
+							"",
+							"if (request.method == 'GET' || request.method == 'DELETE') {",
+							"    ",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"}",
+							"",
+							"else if (request.method == 'PUT' || request.method == 'POST') {",
+							"    ",
+							"    x_content_sha256 = CryptoJS.SHA256(resolvedRequest.body.raw).toString(CryptoJS.enc.Base64)",
+							"",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}\\nx-content-sha256: ${x_content_sha256}\\ncontent-type: ${request.headers[\"content-type\"]}\\ncontent-length: ${resolvedRequest.body.raw.length}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host x-content-sha256 content-type content-length\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"    pm.variables.set('digest', x_content_sha256)",
+							"}",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "authorization",
+						"type": "text",
+						"value": "{{auth}}"
+					},
+					{
+						"key": "date",
+						"type": "text",
+						"value": "{{date}}"
+					},
+					{
+						"key": "Content-Type",
+						"name": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "x-content-sha256",
+						"type": "text",
+						"value": "{{digest}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"compartmentId\":\"{{compartmentId}}\", \"name\":\"postman_bucket\"}"
+				},
+				"url": {
+					"raw": "https://objectstorage.us-phoenix-1.oraclecloud.com/n/{{namespaceName}}/b/postman_bucket/o/postman_file.txt",
+					"protocol": "https",
+					"host": [
+						"objectstorage",
+						"us-phoenix-1",
+						"oraclecloud",
+						"com"
+					],
+					"path": [
+						"n",
+						"{{namespaceName}}",
+						"b",
+						"postman_bucket",
+						"o",
+						"postman_file.txt"
+					]
+				},
+				"description": "Deletes the previously added file from 'postman_bucket'"
+			},
+			"response": []
+		},
+		{
+			"name": "DeleteBucket",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"id": "d6fd288c-576b-46a8-98d2-4ee2dd98a727",
+						"exec": [
+							"//By Alexander Ros",
+							"//February 19, 2019",
+							"",
+							"//Loads jsrsasign into the Postman sandbox to utilize RSA-SHA256 signing functions. See https://github.com/kjur/jsrsasign/issues/199",
+							"var navigator = {}; //fake a navigator object for the lib",
+							"var window = {}; //fake a window object for the lib",
+							"eval(postman.getGlobalVariable(\"jsrsasign-js\")); //import javascript jsrsasign",
+							"",
+							"//Resolve Postman variables in request for use in constructing the signing string. See https://github.com/postmanlabs/postman-app-support/issues/3322",
+							"let sdk = require('postman-collection'),",
+							"    newRequest = new sdk.Request(pm.request.toJSON()),",
+							"    resolvedRequest = newRequest.toObjectResolved(null, [pm.variables.toObject()], { ignoreOwnVariables: true });",
+							"",
+							"//Construct the keyId for the Authorization header",
+							"var keyId = postman.getEnvironmentVariable(\"tenancyId\") + '/' + postman.getEnvironmentVariable(\"userId\") + '/' +  postman.getEnvironmentVariable(\"fingerprint\");",
+							"",
+							"var date = new Date().toUTCString()",
+							"",
+							"//Initialize the signer using the secret vaariable (which should be the user's private PEM key) and a passphrase if necessary.",
+							"var secret = postman.getEnvironmentVariable(\"secret\");",
+							"var passphrase = postman.getEnvironmentVariable(\"passphrase\");",
+							"var sig = new KJUR.crypto.Signature({\"alg\": \"SHA256withRSA\"});",
+							"sig.init(secret, passphrase)",
+							"",
+							"//Constructing the request-target string",
+							"var path = resolvedRequest.url.path.join('/');",
+							"var queries = resolvedRequest.url.query",
+							"                .filter(query => query.disabled !== true)",
+							"                .map(query => (query['key'] + '=' + query['value']))",
+							"                .join('&');",
+							"",
+							"var request_target = '/' + path",
+							"",
+							"if (queries.length > 0)",
+							"    request_target += '?' + queries",
+							"",
+							"",
+							"if (request.method == 'GET' || request.method == 'DELETE') {",
+							"    ",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"}",
+							"",
+							"else if (request.method == 'PUT' || request.method == 'POST') {",
+							"    ",
+							"    x_content_sha256 = CryptoJS.SHA256(resolvedRequest.body.raw).toString(CryptoJS.enc.Base64)",
+							"",
+							"    var signing_string = `date: ${date}\\n(request-target): ${request.method.toLowerCase()} ${request_target}\\nhost: ${resolvedRequest.url.host.join('.')}\\nx-content-sha256: ${x_content_sha256}\\ncontent-type: ${request.headers[\"content-type\"]}\\ncontent-length: ${resolvedRequest.body.raw.length}`",
+							"    ",
+							"    console.log(signing_string)",
+							"    ",
+							"    sig.updateString(signing_string)",
+							"    var signValueHex = sig.sign()",
+							"    var signature = hextob64(signValueHex)",
+							"    ",
+							"    auth = `Signature keyId=\"${keyId}\",algorithm=\"rsa-sha256\",signature=\"${signature}\",headers=\"date (request-target) host x-content-sha256 content-type content-length\"`",
+							"    ",
+							"    pm.variables.set('auth', auth)",
+							"    pm.variables.set('date', date)",
+							"    pm.variables.set('digest', x_content_sha256)",
+							"}",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "authorization",
+						"type": "text",
+						"value": "{{auth}}"
+					},
+					{
+						"key": "date",
+						"type": "text",
+						"value": "{{date}}"
+					},
+					{
+						"key": "Content-Type",
+						"name": "Content-Type",
+						"type": "text",
+						"value": "application/json"
+					},
+					{
+						"key": "x-content-sha256",
+						"type": "text",
+						"value": "{{digest}}"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"compartmentId\":\"{{compartmentId}}\", \"name\":\"postman_bucket\"}"
+				},
+				"url": {
+					"raw": "https://objectstorage.us-phoenix-1.oraclecloud.com/n/{{namespaceName}}/b/postman_bucket",
+					"protocol": "https",
+					"host": [
+						"objectstorage",
+						"us-phoenix-1",
+						"oraclecloud",
+						"com"
+					],
+					"path": [
+						"n",
+						"{{namespaceName}}",
+						"b",
+						"postman_bucket"
+					]
+				},
+				"description": "Deletes the bucket 'postman_bucket'"
+			},
+			"response": []
+		}
+	]
+}
