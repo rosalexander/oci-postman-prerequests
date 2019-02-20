@@ -90,4 +90,89 @@ The last two requests will delete the object `postman_object.txt` and then delet
 All these requests were made through the Object Storage Service API, but you should be able to now use any other services listed in the API References page, provided that you change your endpoint and construct the request correctly. Of course, I wasn't able to test every single service and request, so let me know if you run into any issues.
 
 # How to create an authorization header (or what the heck does the pre-request script do?)
-The OCI REST API follows the HTTP Signature protocal ([draft-cavage-http-signatures-08](https://tools.ietf.org/html/draft-cavage-http-signatures-08)) for authorization. 
+This section is for people who want to _really_ understand the OCI REST API and maybe learn how to make API calls somewhere besides Postman. The OCI REST API follows the HTTP Signature protocal ([draft-cavage-http-signatures-08](https://tools.ietf.org/html/draft-cavage-http-signatures-08)) for authorization. This requires the constructing many elements that could be a little confusing for someone who just started trying to learn the OCI API. I will attempt to distill them into simple, easy to understand tasks. This is basically a summary of the [Request Signatures documentation](https://docs.cloud.oracle.com/iaas/Content/API/Concepts/signingrequests.htm).
+
+## Step 1: Create a signing string
+
+A signing string is a multi-line string that contains a single header and it's value in each line.
+
+GET and DELETE requests need the headers `(request-target)`, `(host)`, and `date`.
+PUT AND POST requests need the headers `(request-target)`, `(host)`, `date`, `x-content-sha256`, `content-type`, and `content-length`.
+
+What are we going to do with this signing string? We are going to hash it with SHA256, and then we are going to sign it with a RSA private key.
+
+Here is an example of a signing string for a POST request. Please note at the end of each line is the `\n` character which signifies a new line.
+
+```
+date: Thu, 05 Jan 2014 21:31:40 GMT
+(request-target): post /20160918/volumeAttachments
+host: iaas.us-phoenix-1.oraclecloud.com
+content-length: 316
+content-type: application/json
+x-content-sha256: V9Z20UJTvkvpJ50flBzKE32+6m2zJjweHpDMX/U4Uy0=
+```
+The headers can be in any order, but you must remember that order for later!
+
+### Explanation of each header
+**date**: The date the request was made in UTC or GMT time.
+
+**(request-target)**: The request method along with the URL snippet that comes after the endpoint/host portion.
+
+**content-length**: The length of the body, which should be a string (even if it is JSON).
+
+**content-type**: The content-type of the body.
+
+**x-content-sha256**: The content of the body hashed with SHA256.
+
+## Step 2: Hash the signing string
+
+Now we will use the SHA256 algorithm to hash the string. If I were using Python with the Pycryptodome library, it would look like this
+
+```python
+>>> from Crypto.Hash import SHA256 
+
+>>> signing_string = """date: Thu, 05 Jan 2014 21:31:40 GMT
+(request-target): post /20160918/volumeAttachments
+host: iaas.us-phoenix-1.oraclecloud.com
+content-length: 316
+content-type: application/json
+x-content-sha256: V9Z20UJTvkvpJ50flBzKE32+6m2zJjweHpDMX/U4Uy0="""
+
+>>> hashed_signing_string = SHA256.new((bytes(signing_string, 'utf-8'))) #returns a hash object
+>>> print(hashed_signing_string.hexdigest()) #prints the hexadecimal string of the hash
+'b0767ea900475d106b82f51642141749e0872a1236ab48219ab3d8123f4eac89'
+```
+
+## Step 3: Sign the hashed signing string and then encode to base64
+
+Now we will use our private RSA key to sign the hashed string then encode to base64. If I were using Python, it would look like this
+
+```python
+>>> from Crypto.PublicKey import RSA
+>>> from Crypto.Signature import PKCS1_v1_5
+>>> from base64 import b64encode
+
+>>> private_key = """-----BEGIN RSA PRIVATE KEY-----
+MIICXgIBAAKBgQDCFENGw33yGihy92pDjZQhl0C36rPJj+CvfSC8+q28hxA161QF
+NUd13wuCTUcq0Qd2qsBe/2hFyc2DCJJg0h1L78+6Z4UMR7EOcpfdUE9Hf3m/hs+F
+UR45uBJeDK1HSFHD8bHKD6kv8FPGfJTotc+2xjJwoYi+1hqp1fIekaxsyQIDAQAB
+AoGBAJR8ZkCUvx5kzv+utdl7T5MnordT1TvoXXJGXK7ZZ+UuvMNUCdN2QPc4sBiA
+QWvLw1cSKt5DsKZ8UETpYPy8pPYnnDEz2dDYiaew9+xEpubyeW2oH4Zx71wqBtOK
+kqwrXa/pzdpiucRRjk6vE6YY7EBBs/g7uanVpGibOVAEsqH1AkEA7DkjVH28WDUg
+f1nqvfn2Kj6CT7nIcE3jGJsZZ7zlZmBmHFDONMLUrXR/Zm3pR5m0tCmBqa5RK95u
+412jt1dPIwJBANJT3v8pnkth48bQo/fKel6uEYyboRtA5/uHuHkZ6FQF7OUkGogc
+mSJluOdc5t6hI1VsLn0QZEjQZMEOWr+wKSMCQQCC4kXJEsHAve77oP6HtG/IiEn7
+kpyUXRNvFsDE0czpJJBvL/aRFUJxuRK91jhjC68sA7NsKMGg5OXb5I5Jj36xAkEA
+gIT7aFOYBFwGgQAQkWNKLvySgKbAZRTeLBacpHMuQdl1DfdntvAyqpAZ0lY0RKmW
+G6aFKaqQfOXKCyWoUiVknQJAXrlgySFci/2ueKlIE1QqIiLSZ8V8OlpFLRnb1pzI
+7U1yQXnTAEFYM560yJlzUpOb1V4cScGd365tiSMvxLOvTA==
+-----END RSA PRIVATE KEY-----"""
+
+>>> rsakey = RSA.importKey(private_key) # create RSAKey object
+>>> signer = PKCS1_v1_5.new(rsakey) # use the PKCS1v15 padding scheme
+>>> signed_hashed_signing_string = b64encode(signer.sign(digest)) # sign the hash object and then encode it to base64
+
+>>> print(signed_hased_signing_string) 
+b'Mje8vIDPlwIHmD/cTDwRxE7HaAvBg16JnVcsuqaNRim23fFPgQfLoOOxae6WqKb1uPjYEl0qIdazWaBy/Ml8DRhqlocMwoSXv0fbukP8J5N80LCmzT/FFBvIvTB91XuXI3hYfP9Zt1l7S6ieVadHUfqBedWH0itrtPJBgKmrWso='
+```
+## Step 4: Construct a keyId string
