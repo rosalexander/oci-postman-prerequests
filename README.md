@@ -92,7 +92,7 @@ All these requests were made through the Object Storage Service API, but you sho
 # How to create an authorization header (or what the heck does the pre-request script do?)
 This section is for people who want to _really_ understand the OCI REST API and maybe learn how to make API calls somewhere besides Postman. The OCI REST API follows the HTTP Signature protocal ([draft-cavage-http-signatures-08](https://tools.ietf.org/html/draft-cavage-http-signatures-08)) for authorization. This requires the constructing many elements that could be a little confusing for someone who just started trying to learn the OCI API. I will attempt to distill them into simple, easy to understand tasks. This is basically a summary of the [Request Signatures documentation](https://docs.cloud.oracle.com/iaas/Content/API/Concepts/signingrequests.htm).
 
-## Step 1: Create a signing string
+## Step 1: Create a signing-string
 
 A signing string is a multi-line string that contains a single header and it's value in each line.
 
@@ -124,7 +124,14 @@ The headers can be in any order, but you must remember that order for later!
 
 **x-content-sha256**: The content of the body hashed with SHA256.
 
-## Step 2: Hash the signing string
+## Step 1.5: Construct the header order
+
+This is a string that has all the headers in the order in where each header appears in the signing-string. For the example signing-string above, the header order would be
+```
+"date (request-target) host content-length content-type x-content-sha256"
+```
+
+## Step 2: Hash the signing-string
 
 Now we will use the SHA256 algorithm to hash the string. If I were using Python with the Pycryptodome library, it would look like this
 
@@ -143,7 +150,7 @@ x-content-sha256: V9Z20UJTvkvpJ50flBzKE32+6m2zJjweHpDMX/U4Uy0="""
 'b0767ea900475d106b82f51642141749e0872a1236ab48219ab3d8123f4eac89'
 ```
 
-## Step 3: Sign the hashed signing string and then encode to base64
+## Step 3: Sign the hashed-signing-string and then encode to base64
 
 Now we will use our private RSA key to sign the hashed string then encode to base64. If I were using Python, it would look like this
 
@@ -176,3 +183,39 @@ G6aFKaqQfOXKCyWoUiVknQJAXrlgySFci/2ueKlIE1QqIiLSZ8V8OlpFLRnb1pzI
 b'Mje8vIDPlwIHmD/cTDwRxE7HaAvBg16JnVcsuqaNRim23fFPgQfLoOOxae6WqKb1uPjYEl0qIdazWaBy/Ml8DRhqlocMwoSXv0fbukP8J5N80LCmzT/FFBvIvTB91XuXI3hYfP9Zt1l7S6ieVadHUfqBedWH0itrtPJBgKmrWso='
 ```
 ## Step 4: Construct a keyId string
+
+The keyId is of the form `"<tenancy_ocid>/<user_ocid>/<key_fingerprint>"`. I will be using the keyId 
+```
+ocid1.tenancy.oc1..aaaaaaaaba3pv6wkcr4jqae5f15p2b2m2yt2j6rx32uzr4h25vqstifsfdsq/ocid1.user.oc1..aaaaaaaat5nvwcna5j6aqzjcaty5eqbb6qt2jvpkanghtgdaqedqw3rynjq/73:61:a2:21:67:e0:df:be:7e:4b:93:1e:15:98:a5:b7
+```
+
+## Step 5: Construct the Authorization header using the signed-hashed-signing-string, the header order, and the keyId
+
+The Authorization header is a single-line string. with the information for Signature version, keyId, signing algorithm (which is rsa-sha256), header order, and signature (which is the signed-hashed-signing-string).
+
+This is the general syntax of the Authorization header
+
+```
+'Signature version="1",keyId="<tenancy_ocid>/<user_ocid>/<key_fingerprint>",algorithm="rsa-sha256",headers="(request-target) date x-content-sha256 content-type content-length",signature="Base64(RSA-SHA256(<signing_string>))"'
+```
+
+This is an example of how my constructed Authorization header would look like
+```
+Signature version="1",headers="date (request-target) host content-length content-type x-content-sha256",keyId="ocid1.tenancy.oc1..aaaaaaaaba3pv6wkcr4jqae5f15p2b2m2yt2j6rx32uzr4h25vqstifsfdsq/ocid1.user.oc1..aaaaaaaat5nvwcna5j6aqzjcaty5eqbb6qt2jvpkanghtgdaqedqw3rynjq/73:61:a2:21:67:e0:df:be:7e:4b:93:1e:15:98:a5:b7",algorithm="rsa-sha256",signature="Mje8vIDPlwIHmD/cTDwRxE7HaAvBg16JnVcsuqaNRim23fFPgQfLoOOxae6WqKb1uPjYEl0qIdazWaBy/Ml8DRhqlocMwoSXv0fbukP8J5N80LCmzT/FFBvIvTB91XuXI3hYfP9Zt1l7S6ieVadHUfqBedWH0itrtPJBgKmrWso="
+```
+This is an example of how my constructed Authorization header would look like if I appended new lines into it for easier reading
+```
+Signature version="1",headers="date (request-target) host content-length c
+ontent-type x-content-sha256",keyId="ocid1.tenancy.oc1..aaaaaaaaba3pv6wkcr
+4jqae5f15p2b2m2yt2j6rx32uzr4h25vqstifsfdsq/ocid1.user.oc1..aaaaaaaat5nvwcn
+a5j6aqzjcaty5eqbb6qt2jvpkanghtgdaqedqw3rynjq/73:61:a2:21:67:e0:df:be:7e:4b
+:93:1e:15:98:a5:b7",algorithm="rsa-sha256",signature="Mje8vIDPlwIHmD/cTDwR
+xE7HaAvBg16JnVcsuqaNRim23fFPgQfLoOOxae6WqKb1uPjYEl0qIdazWaBy/Ml8DRhqlocMwo
+SXv0fbukP8J5N80LCmzT/FFBvIvTB91XuXI3hYfP9Zt1l7S6ieVadHUfqBedWH0itrtPJBgKmrWso="
+```
+
+**Now just add this to the Authorization header of your POST request!**
+
+#### Don't want to write your own implementation or still feeling lost?
+Check out the [Sample Code here](https://docs.cloud.oracle.com/iaas/Content/API/Concepts/signingrequests.htm#seven)! There are examples for Bash, Java, NodeJS, Python, etc...This resource was extremely helpful in my understanding of how to construct Authorization headers, so don't sleep on it!
+
