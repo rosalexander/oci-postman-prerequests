@@ -34,7 +34,7 @@ Don't forget to set the variables in the OCI environment
 Visit this link [here](https://docs.cloud.oracle.com/iaas/Content/API/Concepts/apisigningkey.htm#How). **_Don't forget to upload the public key to your user account! This is necessary to make API calls_**. 
 
 # Tutorial
-To run a request, just press the big blue Send button on the top right.
+To run a request, just press the big blue Send button on the top right in Postman.
 
 ## Step 1: Load JSRSASign
 Before you can make any API calls, you must run the `Load JSRSASign` request. This will retrieve the javascript library [JSRSASign](http://kjur.github.io/jsrsasign/) and set code to be a global variable in Postman, which will then be initialized using the javascript eval() function. Why do we need this library? The OCI REST API authorization header requires us to be able to do signing with RSA. The CryptoJS library within Postman only supports signing with HMAC, so unfortunately we must use this workaround. The good news is that we only have to run this request once, and then we can make as many requests as we want until we close Postman. 
